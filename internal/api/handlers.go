@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
-
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/gommon/random"
 	"WebdavSync/internal/db"

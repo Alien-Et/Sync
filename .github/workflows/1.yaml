@@ -1,4 +1,4 @@
-name: CI Pipeline for WebdavSync
+name: WebdavSync CI 流水线
 
 on:
   push:
@@ -9,118 +9,103 @@ on:
       - main
 
 jobs:
-  build-and-test:
+  构建与测试:
     runs-on: ubuntu-latest
+    name: 构建与测试 Go 后端和 Vue 前端
 
     steps:
-      # Checkout the repository
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      # Set up Go environment
-      - name: Set up Go
+      - name: 配置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21' # Adjust to your Go version
-          cache: true
+          go-version: '1.21'
+          cache: false # 临时禁用缓存以确保依赖正确加载
 
-      # Install Go dependencies
-      - name: Install Go dependencies
+      - name: 安装 Go 依赖
         run: go mod download
         working-directory: .
 
-      # Run Go linter (golangci-lint)
-      - name: Run Go linter
+      - name: 运行 Go 代码检查
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           working-directory: .
 
-      # Run Go tests
-      - name: Run Go tests
+      - name: 运行 Go 测试
         run: go test ./... -v
         working-directory: .
 
-      # Build Go server
-      - name: Build Go server
+      - name: 构建 Go 服务端
         run: go build -o webdavsync-server ./cmd/server/main.go
         working-directory: .
 
-      # Set up Node.js environment for frontend
-      - name: Set up Node.js
+      - name: 配置 Node.js 环境
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # Adjust to your Node.js version
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: web/package.json
 
-      # Install frontend dependencies
-      - name: Install frontend dependencies
+      - name: 安装前端依赖
         run: npm ci
         working-directory: ./web
 
-      # Run frontend linter (if applicable)
-      - name: Run frontend linter
+      - name: 运行前端代码检查
         run: npm run lint
         working-directory: ./web
-        continue-on-error: true # Adjust based on your linting strictness
+        continue-on-error: true
 
-      # Run frontend tests (if applicable)
-      - name: Run frontend tests
+      - name: 运行前端测试
         run: npm run test
         working-directory: ./web
-        continue-on-error: true # Adjust if tests are mandatory
+        continue-on-error: true
 
-      # Build frontend
-      - name: Build frontend
+      - name: 构建前端
         run: npm run build
         working-directory: ./web
 
-      # Upload Go binary as artifact
-      - name: Upload Go binary
+      - name: 上传 Go 二进制文件
         uses: actions/upload-artifact@v4
         with:
           name: webdavsync-server
           path: webdavsync-server
           retention-days: 5
 
-      # Upload frontend build as artifact
-      - name: Upload frontend build
+      - name: 上传前端构建产物
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
           path: web/dist/
           retention-days: 5
 
-  deploy:
+  部署:
     runs-on: ubuntu-latest
-    needs: build-and-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Only deploy on push to main
+    needs: 构建与测试
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: 部署到生产环境
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      # Download artifacts
-      - name: Download Go binary
+      - name: 下载 Go 二进制文件
         uses: actions/download-artifact@v4
         with:
           name: webdavsync-server
           path: ./artifacts/
 
-      - name: Download frontend build
+      - name: 下载前端构建产物
         uses: actions/download-artifact@v4
         with:
           name: frontend-build
           path: ./artifacts/dist/
 
-      # Placeholder deployment step
-      - name: Deploy to server
+      - name: 部署到服务器
         run: |
-          echo "Deploying Go binary and frontend assets..."
-          # Add your deployment logic here, e.g., SCP to a server, push to a cloud service, etc.
-          # Example: scp artifacts/webdavsync-server user@server:/path/to/deploy
-          # Example: rsync -av artifacts/dist/ user@server:/path/to/webroot
+          echo "正在部署 Go 二进制文件和前端静态资源..."
+          # 在此添加部署逻辑
         env:
           DEPLOY_SERVER: ${{ secrets.DEPLOY_SERVER }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
