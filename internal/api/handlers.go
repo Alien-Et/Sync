@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/gommon/random"
 	"WebdavSync/internal/db"
@@ -51,14 +52,13 @@ func (a *API) login(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 	}
 	if a.db.AuthenticateUser(creds.Username, creds.Password) {
-		return c.JSON(http.StatusOK, map[string]string{"token": "dummy-token"}) // Replace with proper JWT in production
+		return c.JSON(http.StatusOK, map[string]string{"token": "dummy-token"})
 	}
 	return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid credentials"})
 }
 
 func (a *API) authMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		// In production, validate JWT token here
 		token := c.Request().Header.Get("Authorization")
 		if token == "" {
 			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing token"})
@@ -148,7 +148,6 @@ func (a *API) handleConflicts() {
 		a.conflictQueue[id] = conflict.Choice
 		a.mu.Unlock()
 
-		// Notify clients via logs (in lieu of WebSocket for conflicts)
 		a.eng.log(fmt.Sprintf("New conflict detected for file: %s (ID: %s)", conflict.File.Path, id))
 	}
 }

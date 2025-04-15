@@ -1,4 +1,4 @@
-name: CI Pipeline for WebdavSync
+name: WebdavSync CI/CD 流水线
 
 on:
   push:
@@ -13,115 +13,130 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout the repository
-      - name: Checkout code
+      # 1. 检出代码
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      # Set up Go environment
-      - name: Set up Go
+      # 2. 设置 Go 环境
+      - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21' # Adjust to your Go version
+          go-version: '1.22.2'  # 与 go.mod 保持一致
           cache: true
 
-      # Install Go dependencies
-      - name: Install Go dependencies
-        run: go mod download
+      # 3. 解决 golangci-lint 报错的关键步骤
+      - name: 初始化 Go 模块
+        run: |
+          go mod tidy
+          go mod verify
         working-directory: .
 
-      # Run Go linter (golangci-lint)
-      - name: Run Go linter
+      # 4. 运行代码检查 (修复了 typecheck 问题)
+      - name: 运行 Go 静态检查
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.56.2  # 指定稳定版本
+          args: --timeout=5m --verbose
           working-directory: .
+          skip-pkg-cache: true  # 避免缓存问题
 
-      # Run Go tests
-      - name: Run Go tests
-        run: go test ./... -v
+      # 5. 运行单元测试
+      - name: 运行 Go 测试
+        run: |
+          go test -coverprofile=coverage.out -v ./...
+          go tool cover -func=coverage.out
         working-directory: .
 
-      # Build Go server
-      - name: Build Go server
-        run: go build -o webdavsync-server ./cmd/server/main.go
+      # 6. 编译后端服务
+      - name: 编译 Go 服务
+        run: go build -o bin/webdavsync-server ./cmd/server/main.go
         working-directory: .
 
-      # Set up Node.js environment for frontend
-      - name: Set up Node.js
+      # 7. 设置 Node.js 环境
+      - name: 设置 Node.js 环境
         uses: actions/setup-node@v4
         with:
-          node-version: '20' # Adjust to your Node.js version
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: web/package.json
 
-      # Install frontend dependencies
-      - name: Install frontend dependencies
+      # 8. 前端依赖安装
+      - name: 安装前端依赖
         run: npm ci
         working-directory: ./web
 
-      # Run frontend linter (if applicable)
-      - name: Run frontend linter
+      # 9. 前端代码检查
+      - name: 运行前端 Lint
         run: npm run lint
         working-directory: ./web
-        continue-on-error: true # Adjust based on your linting strictness
+        continue-on-error: true  # Lint 错误不阻塞流程
 
-      # Run frontend tests (if applicable)
-      - name: Run frontend tests
+      # 10. 前端测试
+      - name: 运行前端测试
         run: npm run test
         working-directory: ./web
-        continue-on-error: true # Adjust if tests are mandatory
 
-      # Build frontend
-      - name: Build frontend
+      # 11. 前端构建
+      - name: 构建前端资源
         run: npm run build
         working-directory: ./web
 
-      # Upload Go binary as artifact
-      - name: Upload Go binary
+      # 12. 归档构建产物
+      - name: 归档后端二进制
         uses: actions/upload-artifact@v4
         with:
           name: webdavsync-server
-          path: webdavsync-server
-          retention-days: 5
+          path: bin/webdavsync-server
+          retention-days: 7
 
-      # Upload frontend build as artifact
-      - name: Upload frontend build
+      - name: 归档前端构建
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
           path: web/dist/
-          retention-days: 5
+          retention-days: 7
 
   deploy:
     runs-on: ubuntu-latest
     needs: build-and-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Only deploy on push to main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # 仅 main 分支推送触发
 
     steps:
-      - name: Checkout code
+      # 1. 检出代码 (需要获取部署脚本)
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      # Download artifacts
-      - name: Download Go binary
+      # 2. 下载构建产物
+      - name: 下载后端程序
         uses: actions/download-artifact@v4
         with:
           name: webdavsync-server
-          path: ./artifacts/
+          path: deploy/
 
-      - name: Download frontend build
+      - name: 下载前端资源
         uses: actions/download-artifact@v4
         with:
           name: frontend-build
-          path: ./artifacts/dist/
+          path: deploy/dist/
 
-      # Placeholder deployment step
-      - name: Deploy to server
+      # 3. 安全部署 (示例)
+      - name: 安全部署到服务器
         run: |
-          echo "Deploying Go binary and frontend assets..."
-          # Add your deployment logic here, e.g., SCP to a server, push to a cloud service, etc.
-          # Example: scp artifacts/webdavsync-server user@server:/path/to/deploy
-          # Example: rsync -av artifacts/dist/ user@server:/path/to/webroot
+          echo "开始部署..."
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # 部署后端
+          scp -o StrictHostKeyChecking=no \
+              deploy/webdavsync-server \
+              $DEPLOY_USER@$DEPLOY_SERVER:/opt/webdavsync/
+              
+          # 部署前端
+          rsync -avz --delete \
+              deploy/dist/ \
+              $DEPLOY_USER@$DEPLOY_SERVER:/var/www/webdavsync/
         env:
           DEPLOY_SERVER: ${{ secrets.DEPLOY_SERVER }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
