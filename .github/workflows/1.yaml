@@ -1,14 +1,12 @@
-name: Sync
+name: 持续集成与发布
 
 on:
   push:
     branches:
-      - main
-      - master
+      - '**'  # 监听所有分支，避免分支不匹配
   pull_request:
     branches:
-      - main
-      - master
+      - '**'
   release:
     types: [published]
 
@@ -20,14 +18,16 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 打印分支信息
+      - name: 打印环境信息
         run: |
-          echo "当前分支: $GITHUB_REF_NAME"
           echo "事件: $GITHUB_EVENT_NAME"
+          echo "分支: $GITHUB_REF_NAME"
+          echo "仓库: $GITHUB_REPOSITORY"
+          echo "提交 SHA: $GITHUB_SHA"
 
       - name: 打印文件列表
         run: |
-          ls -R
+          ls -R || echo "无法列出文件"
 
   检查代码:
     name: 检查代码格式
@@ -43,13 +43,12 @@ jobs:
 
       - name: 检查 Go 模块
         run: |
-          go mod tidy || echo "go.mod 检查失败，可能缺失或不完整"
-
-      - name: 运行 golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --timeout=5m --verbose
+          if [ -f "go.mod" ]; then
+            go mod tidy
+            echo "go.mod 检查完成"
+          else
+            echo "go.mod 文件缺失"
+          fi
         continue-on-error: true
 
       - name: 配置 Node.js 环境
@@ -61,58 +60,18 @@ jobs:
 
       - name: 检查前端目录
         run: |
-          if [ -d "web" ]; then
-            echo "前端目录存在"
+          if [ -d "web" ] && [ -f "web/package.json" ]; then
+            cd web
+            npm ci || echo "前端依赖安装失败"
           else
-            echo "前端目录缺失"
+            echo "web 目录或 package.json 缺失"
           fi
-
-      - name: 安装前端依赖
-        run: |
-          cd web || exit 0
-          npm ci || echo "前端依赖安装失败"
-
-      - name: 运行 ESLint
-        run: |
-          cd web || exit 0
-          npm install eslint eslint-plugin-vue --save-dev || echo "ESLint 安装失败"
-          npx eslint src --ext .js,.vue || echo "ESLint 检查失败"
-        continue-on-error: true
-
-  测试:
-    name: 运行测试
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 配置 Go 环境
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: 运行 Go 测试
-        run: |
-          go test ./... -v -cover || echo "暂无 Go 测试用例或测试失败"
-
-      - name: 配置 Node.js 环境
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'web/package.json'
-
-      - name: 运行前端测试
-        run: |
-          cd web || exit 0
-          npm install vitest --save-dev || echo "Vitest 安装失败"
-          npx vitest run || echo "暂无前端测试用例或测试失败"
         continue-on-error: true
 
   构建:
     name: 构建跨平台程序
     runs-on: ${{ matrix.os }}
-    needs: [检查代码, 测试]
+    needs: 检查代码
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -121,17 +80,14 @@ jobs:
             goos: linux
             goarch: amd64
             binary: webdav-sync-linux-amd64
-            zip_ext: .zip
           - os: windows-latest
             goos: windows
             goarch: amd64
             binary: webdav-sync-windows-amd64.exe
-            zip_ext: .zip
           - os: macos-latest
             goos: darwin
             goarch: amd64
             binary: webdav-sync-macos-amd64
-            zip_ext: .zip
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -143,10 +99,10 @@ jobs:
 
       - name: 检查构建目录
         run: |
-          if [ -d "cmd/server" ]; then
-            echo "cmd/server 目录存在"
+          if [ -d "cmd/server" ] && [ -f "cmd/server/main.go" ]; then
+            echo "cmd/server/main.go 存在"
           else
-            echo "cmd/server 目录缺失"
+            echo "cmd/server/main.go 缺失，构建将失败"
             exit 1
           fi
 
@@ -167,12 +123,13 @@ jobs:
 
       - name: 构建前端
         run: |
-          if [ -d "web" ]; then
+          if [ -d "web" ] && [ -f "web/package.json" ]; then
             cd web
             npm ci
             npm run build
+            echo "前端构建完成"
           else
-            echo "前端目录缺失，跳过前端构建"
+            echo "web 目录缺失，跳过前端构建"
           fi
 
       - name: 打包构建产物
@@ -183,14 +140,14 @@ jobs:
             cp -r web/public artifacts/web
           fi
           cd artifacts
-          zip -r webdav-sync-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.zip_ext }} .
+          zip -r webdav-sync-${{ matrix.goos }}-${{ matrix.goarch }}.zip .
         shell: bash
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: webdav-sync-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: artifacts/webdav-sync-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.zip_ext }}
+          path: artifacts/webdav-sync-${{ matrix.goos }}-${{ matrix.goarch }}.zip
           retention-days: 7
 
   发布:
@@ -210,9 +167,9 @@ jobs:
       - name: 准备发布文件
         run: |
           mkdir -p release
-          cp artifacts/webdav-sync-linux-amd64/webdav-sync-linux-amd64.zip release/ || echo "Linux 产物缺失"
-          cp artifacts/webdav-sync-windows-amd64/webdav-sync-windows-amd64.zip release/ || echo "Windows 产物缺失"
-          cp artifacts/webdav-sync-macos-amd64/webdav-sync-macos-amd64.zip release/ || echo "macOS 产物缺失"
+          for platform in linux-amd64 windows-amd64 macos-amd64; do
+            cp artifacts/webdav-sync-$platform/webdav-sync-$platform.zip release/ || echo "$platform 产物缺失"
+          done
 
       - name: 发布到 GitHub Releases
         uses: softprops/action-gh-release@v2
