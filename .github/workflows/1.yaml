@@ -1,182 +1,127 @@
-name: 持续集成与发布
+name: CI Pipeline for WebdavSync
 
 on:
   push:
     branches:
-      - '**'  # 监听所有分支，避免分支不匹配
+      - main
   pull_request:
     branches:
-      - '**'
-  release:
-    types: [published]
+      - main
 
 jobs:
-  调试信息:
-    name: 收集调试信息
+  build-and-test:
     runs-on: ubuntu-latest
+
     steps:
-      - name: 检出代码
+      # Checkout the repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 打印环境信息
-        run: |
-          echo "事件: $GITHUB_EVENT_NAME"
-          echo "分支: $GITHUB_REF_NAME"
-          echo "仓库: $GITHUB_REPOSITORY"
-          echo "提交 SHA: $GITHUB_SHA"
-
-      - name: 打印文件列表
-        run: |
-          ls -R || echo "无法列出文件"
-
-  检查代码:
-    name: 检查代码格式
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 配置 Go 环境
+      # Set up Go environment
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.21' # Adjust to your Go version
+          cache: true
 
-      - name: 检查 Go 模块
-        run: |
-          if [ -f "go.mod" ]; then
-            go mod tidy
-            echo "go.mod 检查完成"
-          else
-            echo "go.mod 文件缺失"
-          fi
-        continue-on-error: true
+      # Install Go dependencies
+      - name: Install Go dependencies
+        run: go mod download
+        working-directory: .
 
-      - name: 配置 Node.js 环境
+      # Run Go linter (golangci-lint)
+      - name: Run Go linter
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: .
+
+      # Run Go tests
+      - name: Run Go tests
+        run: go test ./... -v
+        working-directory: .
+
+      # Build Go server
+      - name: Build Go server
+        run: go build -o webdavsync-server ./cmd/server/main.go
+        working-directory: .
+
+      # Set up Node.js environment for frontend
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20' # Adjust to your Node.js version
           cache: 'npm'
-          cache-dependency-path: 'web/package.json'
+          cache-dependency-path: web/package.json
 
-      - name: 检查前端目录
-        run: |
-          if [ -d "web" ] && [ -f "web/package.json" ]; then
-            cd web
-            npm ci || echo "前端依赖安装失败"
-          else
-            echo "web 目录或 package.json 缺失"
-          fi
-        continue-on-error: true
+      # Install frontend dependencies
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: ./web
 
-  构建:
-    name: 构建跨平台程序
-    runs-on: ${{ matrix.os }}
-    needs: 检查代码
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            binary: webdav-sync-linux-amd64
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-            binary: webdav-sync-windows-amd64.exe
-          - os: macos-latest
-            goos: darwin
-            goarch: amd64
-            binary: webdav-sync-macos-amd64
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+      # Run frontend linter (if applicable)
+      - name: Run frontend linter
+        run: npm run lint
+        working-directory: ./web
+        continue-on-error: true # Adjust based on your linting strictness
 
-      - name: 配置 Go 环境
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
+      # Run frontend tests (if applicable)
+      - name: Run frontend tests
+        run: npm run test
+        working-directory: ./web
+        continue-on-error: true # Adjust if tests are mandatory
 
-      - name: 检查构建目录
-        run: |
-          if [ -d "cmd/server" ] && [ -f "cmd/server/main.go" ]; then
-            echo "cmd/server/main.go 存在"
-          else
-            echo "cmd/server/main.go 缺失，构建将失败"
-            exit 1
-          fi
+      # Build frontend
+      - name: Build frontend
+        run: npm run build
+        working-directory: ./web
 
-      - name: 构建 Go 二进制文件
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          cd cmd/server
-          go build -o ${{ matrix.binary }}
-
-      - name: 配置 Node.js 环境
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'web/package.json'
-
-      - name: 构建前端
-        run: |
-          if [ -d "web" ] && [ -f "web/package.json" ]; then
-            cd web
-            npm ci
-            npm run build
-            echo "前端构建完成"
-          else
-            echo "web 目录缺失，跳过前端构建"
-          fi
-
-      - name: 打包构建产物
-        run: |
-          mkdir -p artifacts
-          cp cmd/server/${{ matrix.binary }} artifacts/
-          if [ -d "web/public" ]; then
-            cp -r web/public artifacts/web
-          fi
-          cd artifacts
-          zip -r webdav-sync-${{ matrix.goos }}-${{ matrix.goarch }}.zip .
-        shell: bash
-
-      - name: 上传构建产物
+      # Upload Go binary as artifact
+      - name: Upload Go binary
         uses: actions/upload-artifact@v4
         with:
-          name: webdav-sync-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: artifacts/webdav-sync-${{ matrix.goos }}-${{ matrix.goarch }}.zip
-          retention-days: 7
+          name: webdavsync-server
+          path: webdavsync-server
+          retention-days: 5
 
-  发布:
-    name: 发布到 GitHub Releases
+      # Upload frontend build as artifact
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: web/dist/
+          retention-days: 5
+
+  deploy:
     runs-on: ubuntu-latest
-    needs: 构建
-    if: github.event_name == 'release' && github.event.action == 'published'
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Only deploy on push to main
+
     steps:
-      - name: 检出代码
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 下载构建产物
+      # Download artifacts
+      - name: Download Go binary
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: webdavsync-server
+          path: ./artifacts/
 
-      - name: 准备发布文件
-        run: |
-          mkdir -p release
-          for platform in linux-amd64 windows-amd64 macos-amd64; do
-            cp artifacts/webdav-sync-$platform/webdav-sync-$platform.zip release/ || echo "$platform 产物缺失"
-          done
-
-      - name: 发布到 GitHub Releases
-        uses: softprops/action-gh-release@v2
+      - name: Download frontend build
+        uses: actions/download-artifact@v4
         with:
-          files: |
-            release/webdav-sync-linux-amd64.zip
-            release/webdav-sync-windows-amd64.zip
-            release/webdav-sync-macos-amd64.zip
+          name: frontend-build
+          path: ./artifacts/dist/
+
+      # Placeholder deployment step
+      - name: Deploy to server
+        run: |
+          echo "Deploying Go binary and frontend assets..."
+          # Add your deployment logic here, e.g., SCP to a server, push to a cloud service, etc.
+          # Example: scp artifacts/webdavsync-server user@server:/path/to/deploy
+          # Example: rsync -av artifacts/dist/ user@server:/path/to/webroot
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_SERVER: ${{ secrets.DEPLOY_SERVER }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
