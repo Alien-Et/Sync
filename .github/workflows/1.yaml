@@ -14,58 +14,70 @@ jobs:
     name: 构建与测试 Go 后端和 Vue 前端
 
     steps:
+      # 检出代码仓库
       - name: 检出代码
         uses: actions/checkout@v4
 
+      # 配置 Go 环境
       - name: 配置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
-          cache: false # 临时禁用缓存以确保依赖正确加载
+          go-version: '1.21' # 根据您的 Go 版本调整
+          cache: true
 
+      # 安装 Go 依赖
       - name: 安装 Go 依赖
         run: go mod download
         working-directory: .
 
+      # 运行 Go 代码检查（golangci-lint）
       - name: 运行 Go 代码检查
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           working-directory: .
 
+      # 运行 Go 测试
       - name: 运行 Go 测试
         run: go test ./... -v
         working-directory: .
 
+      # 构建 Go 服务端
       - name: 构建 Go 服务端
         run: go build -o webdavsync-server ./cmd/server/main.go
         working-directory: .
 
+      # 配置 Node.js 环境用于前端
       - name: 配置 Node.js 环境
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20' # 根据您的 Node.js 版本调整
           cache: 'npm'
           cache-dependency-path: web/package.json
 
+      # 安装前端依赖
       - name: 安装前端依赖
         run: npm ci
         working-directory: ./web
 
+      # 运行前端代码检查（如适用）
       - name: 运行前端代码检查
         run: npm run lint
         working-directory: ./web
-        continue-on-error: true
+        continue-on-error: true # 根据您的代码检查严格程度调整
 
+      # 运行前端测试（如适用）
       - name: 运行前端测试
         run: npm run test
         working-directory: ./web
-        continue-on-error: true
+        continue-on-error: true # 如果测试不是必须的，可调整
 
+      # 构建前端
       - name: 构建前端
         run: npm run build
         working-directory: ./web
 
+      # 上传 Go 二进制文件作为构建产物
       - name: 上传 Go 二进制文件
         uses: actions/upload-artifact@v4
         with:
@@ -73,6 +85,7 @@ jobs:
           path: webdavsync-server
           retention-days: 5
 
+      # 上传前端构建产物
       - name: 上传前端构建产物
         uses: actions/upload-artifact@v4
         with:
@@ -83,13 +96,14 @@ jobs:
   部署:
     runs-on: ubuntu-latest
     needs: 构建与测试
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' # 仅在推送到 main 分支时部署
     name: 部署到生产环境
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      # 下载构建产物
       - name: 下载 Go 二进制文件
         uses: actions/download-artifact@v4
         with:
@@ -102,10 +116,13 @@ jobs:
           name: frontend-build
           path: ./artifacts/dist/
 
+      # 占位部署步骤
       - name: 部署到服务器
         run: |
           echo "正在部署 Go 二进制文件和前端静态资源..."
-          # 在此添加部署逻辑
+          # 在此添加您的部署逻辑，例如通过 SCP 上传到服务器或推送到云服务
+          # 示例：scp artifacts/webdavsync-server user@server:/path/to/deploy
+          # 示例：rsync -av artifacts/dist/ user@server:/path/to/webroot
         env:
           DEPLOY_SERVER: ${{ secrets.DEPLOY_SERVER }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
